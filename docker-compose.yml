@@ -1,0 +1,97 @@
+version: '3.4'
+
+services:
+  book.api:
+    image: ${DOCKER_REGISTRY-}bookapi
+    build:
+      context: .
+      dockerfile: src/APIs/Book/Book.API/Dockerfile
+    restart: always
+    networks:
+     - elastic
+    depends_on:
+     - sqlserver
+       
+  ocelot-gateway:
+    image: ocelot-gateway-${TAG:-latest}
+    container_name: ocelot-gateway
+    restart: always
+    build:
+      context: .
+      dockerfile: src/Gateways/BaseOcelotGateway/Dockerfile
+    ports:
+     - 5000:80
+    networks:
+     - elastic
+
+  apm-server:
+    container_name: apm-server
+    image: docker.elastic.co/apm/apm-server:7.11.1
+    depends_on:
+      - elasticsearch
+      - kibana
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    cap_drop: ["ALL"]
+    ports:
+    - 8200:8200
+    networks:
+    - elastic
+    command: >
+       apm-server -e
+         -E apm-server.rum.enabled=true
+         -E setup.kibana.host=kibana:5601
+         -E setup.template.settings.index.number_of_replicas=0
+         -E apm-server.kibana.enabled=true
+         -E apm-server.kibana.host=kibana:5601
+         -E output.elasticsearch.hosts=["elasticsearch:9200"]
+
+  sqlserver:
+    container_name: sqlserver
+    user: root
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    networks:
+    - elastic
+    environment:
+    - ACCEPT_EULA=Y
+    - MSSQL_SA_PASSWORD=Admin@123    
+    volumes: 
+    - ./database/data:/var/opt/mssql/data
+    - ./database/log:/var/opt/mssql/log
+    - ./database/secrets:/var/opt/mssql/secrets
+
+  elasticsearch:
+   container_name: elasticsearch
+   restart: always
+   image: docker.elastic.co/elasticsearch/elasticsearch:7.11.2
+   volumes:
+    - elasticsearch-data:/usr/share/elasticsearch/data
+   environment:
+    #- xpack.security.enabled=true
+    - xpack.monitoring.enabled=true
+    - xpack.watcher.enabled=false
+    - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    - discovery.type=single-node
+   networks:
+    - elastic
+
+  kibana:
+   container_name: kibana
+   restart: always
+   image: docker.elastic.co/kibana/kibana:7.11.2
+   ports:
+    - 5601:5601
+   depends_on:
+    - elasticsearch
+   environment:
+    - ELASTICSEARCH_URL=http://elasticsearch:9200
+    - xpack.security.enabled=true
+    - xpack.security.transport.ssl.enabled=true
+   networks:
+    - elastic
+
+networks:
+  elastic:
+    driver: bridge
+
+volumes:
+  elasticsearch-data:
